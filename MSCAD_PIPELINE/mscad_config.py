@@ -125,6 +125,31 @@ DROP_SINGLE_PACKET_FLOWS = False
 # Java does not, which is why many short flows have Active Mean = 0.
 ADD_FINAL_ACTIVE_SEGMENT = False
 
+# --------------------------------------------------------------------------
+# PART 4: how MSCAD_consolidated_ML.csv treats the infinite rate features
+# --------------------------------------------------------------------------
+# Zero-duration flows (a single packet, or several in the same microsecond)
+# carry Infinity in Flow Byts/s, Flow Pkts/s, Fwd Pkts/s and Bwd Pkts/s.
+#
+#   "drop" -> drop those rows entirely (what Part 4 of the task asks for)
+#   "cap"  -> keep the rows, replacing +/-inf in each rate column with that
+#             column's finite maximum (x ML_INF_CAP_FACTOR)
+#
+# "drop" is the default because it is what was specified, but be aware of
+# what it costs: a port scan is almost entirely single-packet, zero-duration
+# flows, so dropping them removes almost the entire Port_Scan class.  On the
+# synthetic self-test, Port_Scan kept 2 rows out of 250 (0.8%).  If the
+# classifier stages need the class balance more than they need the dropping,
+# set this to "cap".  Stage 04 prints the per-label kept-% either way, so the
+# cost is always visible rather than silent.
+ML_INF_MODE = "drop"
+ML_INF_CAP_FACTOR = 10.0
+
+# De-duplicate identical feature vectors in the ML file.  Floods, scans and
+# brute-force traffic genuinely produce repeated flows, so this also removes
+# real data; it was asked for, and stage 04 reports how many rows it took.
+ML_DROP_DUPLICATE_FEATURES = True
+
 # Attacker detection: a Src IP counts as an attacker when its total forward
 # packets reach this fraction of the top sender's.
 ATTACKER_SHARE = 0.50
