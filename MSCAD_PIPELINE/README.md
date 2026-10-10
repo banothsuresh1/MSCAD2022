@@ -31,6 +31,7 @@ What *was* verified here, on synthetic captures (`make_test_fixture.py`):
 | 120 s flow timeout and 240 s idle timeout both cut flows | yes |
 | Row matching + label confusion table | 7/7 matched rows, 100% label agreement |
 | Scale: 704,000-packet brute-force capture | 19.5 s, peak RSS 53 MB, flat throughput |
+| Re-verified end to end after the Part 4 switches were added | all 6 stages exit 0, verdict unchanged |
 
 Run `selftest.bat` on your machine to reproduce that table before pointing the
 pipeline at the real data.
@@ -190,6 +191,8 @@ built with. Each is a one-line change if you want the other behaviour.
 | `INIT_WIN_DEFAULT` | `-1` (CIC convention) | `0` |
 | `DROP_SINGLE_PACKET_FLOWS` | `False` (packets conserve) | `True` (closer row count) |
 | `ADD_FINAL_ACTIVE_SEGMENT` | `False` (Java) | `True` |
+| `ML_INF_MODE` | `drop` (Part 4 as specified) | `cap` (keep the row, cap the rate feature) |
+| `ML_DROP_DUPLICATE_FEATURES` | `True` (Part 4 as specified) | `False` (keep repeated flows) |
 
 `PKT_LEN_MODE = "payload"` is the one worth understanding: the CIC CSV family
 carries **zeros** in `Fwd Pkt Len Min` / `Bwd Pkt Len Min`, which can only
@@ -198,6 +201,33 @@ pip package counts whole frames instead, which would put a floor of ~54 bytes
 on those columns. `SUBFLOW_MODE` is the switch I am least sure of -- if the
 four `Subflow` columns top the KS table in section 4.4 of the report, flip it
 and re-run.
+
+### The ML file and class balance
+
+`MSCAD_consolidated_ML.csv` is built exactly as Part 4 asks: rows with an
+infinite rate feature are dropped and identical feature vectors are
+de-duplicated. Both steps remove real attack traffic, and the amount is not
+small -- on the synthetic self-test `Port_Scan` keeps **2 of 250** flows
+(0.8%), because a port scan is almost entirely single-packet, zero-duration
+flows whose `Flow Byts/s` is `Infinity`.
+
+Stage 04 therefore prints, and the report tabulates, a per-label breakdown of
+**which step removed how many rows**, plus the kept-%, and names the dominant
+cause for the worst-affected class. Nothing is lost silently.
+
+Two switches change it without touching any other stage:
+
+* `ML_INF_MODE = "cap"` keeps those rows, replacing `+/-inf` in each rate
+  column with that column's finite maximum times `ML_INF_CAP_FACTOR` (10 by
+  default). The written file is then guaranteed finite, which is what the
+  LSTM/CNN scalers need.
+* `ML_DROP_DUPLICATE_FEATURES = False` keeps genuinely repeated flood and scan
+  flows.
+
+Defaults stay at the specified behaviour, so the file you get out of the box is
+the one Part 4 describes. Use `MSCAD_consolidated.csv` -- which keeps every
+flow and its identifiers -- for the PrefixSpan and attack-graph stages
+regardless.
 
 ### Zero-duration flows
 

@@ -569,15 +569,60 @@ def main():
         w("### `MSCAD_consolidated_ML.csv`\n")
         w("For classifier training: the features + `Label` only.\n")
         w("- shape: **%d rows x %d columns**" % tuple(s04["ml_shape"]))
-        w("- rows dropped for an infinite or missing feature: **%s**"
-          % n(s04.get("ml_rows_dropped_inf_nan")))
-        w("- rows dropped as an identical feature vector: **%s**"
-          % n(s04.get("ml_rows_dropped_duplicate")))
+        w("- rows removed as non-finite: **%s**; as an identical feature "
+          "vector: **%s**"
+          % (n(s04.get("ml_rows_dropped_inf_nan")),
+             n(s04.get("ml_rows_dropped_duplicate"))))
+        w("- infinite rate features: **%s**"
+          % {"cap": "capped at the column's finite maximum x %s, rows kept"
+                    % n(s04.get("ml_inf_cap_factor") or 10.0),
+             "drop": "rows dropped"}.get(
+                 str(s04.get("ml_inf_mode") or "drop"),
+                 str(s04.get("ml_inf_mode"))))
+        if s04.get("ml_inf_cells_capped"):
+            w("- individual cells capped: **%s**"
+              % n(s04.get("ml_inf_cells_capped")))
+        w("- de-duplication of identical feature vectors: **%s**"
+          % ("on" if s04.get("ml_drop_duplicate_features", True) else "off"))
         w("")
         w(table(["Label", "rows"],
                 [[k, n(v)] for k, v in
                  sorted((s04.get("ml_labels") or {}).items(),
                         key=lambda kv: -kv[1])]))
+
+        # Per-label class loss, split by which step removed the rows.
+        cause = s04.get("ml_loss_cause_per_label") or {}
+        keptp = s04.get("ml_kept_pct_per_label") or {}
+        full_lab = s04.get("consolidated_labels") or {}
+        mll = s04.get("ml_labels") or {}
+        if cause or keptp:
+            w("**What this file costs, per label.** The two steps run in "
+              "order, so each column is the number of rows that step actually "
+              "removed; a row dropped as non-finite is never also counted as "
+              "a duplicate.\n")
+            rows = []
+            for k in sorted(full_lab, key=lambda x: -full_lab[x]):
+                c = cause.get(k, {})
+                rows.append([k, n(full_lab.get(k)),
+                             n(c.get("inf_nan")), n(c.get("duplicate")),
+                             n(mll.get(k, 0)),
+                             "%.1f%%" % keptp[k] if k in keptp else "-"])
+            w(table(["Label", "flows in full file", "removed: inf/NaN",
+                     "removed: duplicate", "rows in ML file", "kept"], rows))
+            lowest = sorted(keptp.items(), key=lambda kv: kv[1])[:1]
+            if lowest and lowest[0][1] < 25.0:
+                lk = lowest[0][0]
+                c = cause.get(lk, {})
+                dom = ("de-duplication"
+                       if c.get("duplicate", 0) >= c.get("inf_nan", 0)
+                       else "the non-finite rate features")
+                fix = ("`ML_DROP_DUPLICATE_FEATURES = False`"
+                       if c.get("duplicate", 0) >= c.get("inf_nan", 0)
+                       else '`ML_INF_MODE = "cap"`')
+                w("The worst-affected class is **%s**, which keeps %.1f%% of "
+                  "its flows; the dominant cause is %s. Set %s in "
+                  "`mscad_config.py` to keep those rows.\n"
+                  % (lk, lowest[0][1], dom, fix))
         w("Two caveats on this file. Dropping rows with an infinite feature "
           "removes **every zero-duration flow**, which in a port scan is most "
           "of the scan; and de-duplicating identical feature vectors removes "
