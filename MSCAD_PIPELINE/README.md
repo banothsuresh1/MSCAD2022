@@ -37,7 +37,32 @@ pipeline at the real data.
 
 ---
 
-## Quick start (cmd)
+## Quick start A: Anaconda Jupyter (recommended)
+
+Open **`MSCAD_pipeline.ipynb`** in Jupyter and run the cells in order. Cell 2
+is the only one you may need to edit (the three folder paths).
+
+```
+conda activate base
+cd /d D:\IDSPROJECT2026\MSCAD\pipeline\MSCAD_PIPELINE
+jupyter notebook MSCAD_pipeline.ipynb
+```
+
+The notebook runs each stage as a **subprocess, not inside the kernel**. The
+flow data therefore never enters the kernel's memory, so no capture can crash
+it however large, and each stage starts from clean state. Output streams into
+the cell as it runs. The last two cells load the result and build the
+per-host-pair label sequences that PrefixSpan takes as input.
+
+Anaconda already ships `numpy`, `scipy` and `pandas`, which is all the
+`.pcap` path needs -- cell 1 checks and tells you the exact `pip install`
+line if anything is missing. `scapy` is only needed for `.pcapng` input and
+for the synthetic self-test; `tshark` is optional, because the verifier has
+its own independent packet counter built in.
+
+---
+
+## Quick start B: cmd
 
 ```
 cd /d <folder containing these scripts>
@@ -68,10 +93,14 @@ set PY=C:\Users\banot\AppData\Local\Programs\Python\Python313\python.exe
 Every stage accepts `--pcap-dir`, `--csv-dir`, `--out-dir`, `--pkt-len-mode`,
 `--header-len-mode` and `--tshark` to override `mscad_config.py` for one run.
 
-Requirements: `scapy`, `numpy`, `scipy`, `pandas`. The `cicflowmeter` package
-itself is **not** imported at runtime (see below), so a broken install of it
-cannot break this pipeline. `tshark` is optional -- stage 02 falls back to its
-own independent counter and says so.
+Requirements for `.pcap` input: `numpy`, `scipy`, `pandas` -- all three ship
+with Anaconda. `scapy` is needed only for `.pcapng` input and for
+`make_test_fixture.py`. `tshark` is optional: stage 02 has its own
+independent raw-bytes packet counter that needs no third-party package, and
+it reports which counts it managed to take. The `cicflowmeter` package itself
+is **not** imported at runtime (see below), so a broken install of it cannot
+break this pipeline. No Python 3.10+ syntax is used, so any Anaconda Python
+3.8+ works.
 
 ---
 
@@ -90,6 +119,7 @@ own independent counter and says so.
 | `04_consolidate.py` | Part 4: `MSCAD_consolidated.csv` and `MSCAD_consolidated_ML.csv`. |
 | `05_report.py` | Part 5: writes `MSCAD_regeneration_report.md` and copies these scripts into the output folder. |
 | `make_test_fixture.py` | Builds the synthetic captures and a stand-in Kaggle file for `selftest.bat`. |
+| `MSCAD_pipeline.ipynb` | Jupyter driver: one cell per stage, each run as a subprocess, plus result loading and the sequence view. |
 
 Stages 00-04 each write a JSON file into `metrics\`; stage 05 renders the
 report from those, so a number missing from a run shows up as
