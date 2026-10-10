@@ -37,32 +37,45 @@ pipeline at the real data.
 
 ---
 
-## Quick start A: Anaconda Jupyter (recommended)
+## Quick start A: one self-contained notebook (recommended)
 
-Open **`MSCAD_pipeline.ipynb`** in Jupyter and run the cells in order. Cell 2
-is the only one you may need to edit (the three folder paths).
+**`MSCAD_pipeline_selfcontained.ipynb`** holds the entire pipeline in its own
+cells. Download that one file, open it in Jupyter, and run it — nothing else
+in this folder is needed.
 
 ```
 conda activate base
-cd /d D:\IDSPROJECT2026\MSCAD\pipeline\MSCAD_PIPELINE
-jupyter notebook MSCAD_pipeline.ipynb
+jupyter notebook MSCAD_pipeline_selfcontained.ipynb
 ```
 
-The notebook runs each stage as a **subprocess, not inside the kernel**. The
-flow data therefore never enters the kernel's memory, so no capture can crash
-it however large, and each stage starts from clean state. Output streams into
-the cell as it runs. The last two cells load the result and build the
-per-host-pair label sequences that PrefixSpan takes as input.
+Layout: environment check, then a configuration cell (the only one you edit),
+then the feature-name tables, the flow engine and the schema helpers, then one
+definition cell plus one run cell per stage, then the result loader and the
+per-host-pair sequence view that PrefixSpan takes as input.
 
-Anaconda already ships `numpy`, `scipy` and `pandas`, which is all the
-`.pcap` path needs -- cell 1 checks and tells you the exact `pip install`
-line if anything is missing. `scapy` is only needed for `.pcapng` input and
-for the synthetic self-test; `tshark` is optional, because the verifier has
-its own independent packet counter built in.
+Running in the kernel is safe: the engine retains no packets, only per-flow
+accumulators, and a 704,000-packet capture measured a flat 53 MB.
+
+The notebook is **generated** from the `.py` modules by
+`build_selfcontained_notebook.py`, so the two can never drift. Its output has
+been checked byte-for-byte against the script pipeline's — all six raw flow
+CSVs and both consolidated CSVs come out identical. Edit the `.py` files and
+re-run the builder, or edit the notebook cells directly; just do not expect
+changes in one to appear in the other.
 
 ---
 
-## Quick start B: cmd
+## Quick start B: notebook driving the scripts
+
+**`MSCAD_pipeline.ipynb`** is a thin driver: same cell-per-stage layout, but
+each stage runs as a **subprocess** calling the `.py` files. Use this one if
+you want each stage in its own process (the flow data then never enters the
+kernel at all, and every stage starts from clean state). It needs the `.py`
+files next to it.
+
+---
+
+## Quick start C: cmd, no notebook
 
 ```
 cd /d <folder containing these scripts>
@@ -119,7 +132,9 @@ break this pipeline. No Python 3.10+ syntax is used, so any Anaconda Python
 | `04_consolidate.py` | Part 4: `MSCAD_consolidated.csv` and `MSCAD_consolidated_ML.csv`. |
 | `05_report.py` | Part 5: writes `MSCAD_regeneration_report.md` and copies these scripts into the output folder. |
 | `make_test_fixture.py` | Builds the synthetic captures and a stand-in Kaggle file for `selftest.bat`. |
-| `MSCAD_pipeline.ipynb` | Jupyter driver: one cell per stage, each run as a subprocess, plus result loading and the sequence view. |
+| `MSCAD_pipeline_selfcontained.ipynb` | **The whole pipeline in one notebook.** Generated from the modules below; needs no other file. |
+| `MSCAD_pipeline.ipynb` | Thin Jupyter driver: one cell per stage, each run as a subprocess against the `.py` files. |
+| `build_selfcontained_notebook.py` | Regenerates the self-contained notebook from the `.py` sources, so the two cannot diverge. |
 
 Stages 00-04 each write a JSON file into `metrics\`; stage 05 renders the
 report from those, so a number missing from a run shows up as
