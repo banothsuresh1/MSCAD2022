@@ -5,8 +5,9 @@ For every capture:
   * packets read, IPv4 packets accounted for in flows (sum of Tot Fwd Pkts +
     Tot Bwd Pkts), and TWO independent IPv4 counts:
       - tshark -r <file> -Y ip   (if tshark is installed)
-      - a second-opinion counter in this file, written against scapy's raw
-        reader instead of the pipeline's own parser
+      - a second-opinion counter in this file: its own raw-bytes record
+        walk, independent of the pipeline's parser and needing no
+        third-party package at all
     The flow total must equal the independent counts exactly.  The remainder
     up to "packets read" is ARP / IPv6 / non-IP, excluded by design.
   * duplicate flows (same 5-tuple + start Timestamp): must be 0
@@ -17,6 +18,7 @@ For every capture:
 
 import json
 import os
+import struct
 import subprocess
 import sys
 
@@ -63,47 +65,75 @@ def tshark_ipv4_count(path):
 
 
 def second_opinion_ipv4_count(path):
-    """A deliberately separate IPv4 counter, so the check does not rely on
-    tshark being installed and does not reuse the pipeline's own parser."""
+    """A deliberately separate IPv4 packet counter.
+
+    Written against the raw file bytes with its own record walk, independent
+    of mscad_flowmeter's reader, and with no third-party imports at all -- so
+    this check still runs on a stock Anaconda install with no scapy and no
+    Wireshark. If it and the flow totals agree, no packet was lost or
+    double-counted.
+    """
     try:
-        from scapy.utils import RawPcapReader, RawPcapNgReader
-    except Exception as exc:  # noqa: BLE001
-        return None, "scapy unavailable: %s" % exc
-    try:
-        rdr = (RawPcapNgReader(path) if path.lower().endswith(".pcapng")
-               else RawPcapReader(path))
-    except Exception as exc:  # noqa: BLE001
-        return None, "scapy could not open file: %s" % exc
-    n = 0
-    total = 0
-    try:
-        for data, meta in rdr:
-            total += 1
-            lt = getattr(meta, "linktype", getattr(rdr, "linktype", 1))
-            if lt == 1:
-                if len(data) < 14:
-                    continue
-                et = (data[12] << 8) | data[13]
-                base = 14
-                for _ in range(2):
-                    if et in (0x8100, 0x88A8, 0x9100) and len(data) >= base + 4:
+        with open(path, "rb") as fh:
+            gh = fh.read(24)
+            if len(gh) < 24:
+                return None, "file shorter than a pcap header"
+            magic = gh[:4]
+            if magic in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1"):
+                end = "<"
+            elif magic in (b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d"):
+                end = ">"
+            elif magic[:4] == b"\x0a\x0d\x0d\x0a":
+                return None, ("pcapng not supported by this counter; use "
+                              "tshark, or convert with editcap -F pcap")
+            else:
+                return None, "unrecognised pcap magic %r" % magic
+            linktype = struct.unpack(end + "I", gh[20:24])[0]
+            if linktype not in (0, 1, 12, 101, 113, 228, 276):
+                return None, "unsupported datalink type %d" % linktype
+
+            hdr = struct.Struct(end + "IIII")
+            n = 0
+            total = 0
+            while True:
+                rh = fh.read(16)
+                if len(rh) < 16:
+                    break
+                _s, _u, caplen, _orig = hdr.unpack(rh)
+                data = fh.read(caplen)
+                if len(data) < caplen:
+                    break   # truncated final record
+                total += 1
+                if linktype == 1:
+                    if len(data) < 14:
+                        continue
+                    et = (data[12] << 8) | data[13]
+                    base = 14
+                    while et in (0x8100, 0x88A8, 0x9100) and len(data) >= base + 4:
                         et = (data[base + 2] << 8) | data[base + 3]
                         base += 4
-                    else:
-                        break
-                if et == 0x0800 and len(data) > base and (data[base] >> 4) == 4:
-                    n += 1
-            elif lt in (101, 228, 12):
-                if data and (data[0] >> 4) == 4:
-                    n += 1
-            elif lt == 113:
-                if len(data) >= 16 and ((data[14] << 8) | data[15]) == 0x0800:
-                    n += 1
-            else:
-                return None, "unsupported datalink %s" % lt
-    except Exception as exc:  # noqa: BLE001
-        return None, "scapy read error after %d packets: %s" % (total, exc)
-    return n, "scapy raw reader (independent of the pipeline parser)"
+                    if et == 0x0800 and len(data) > base \
+                            and (data[base] >> 4) == 4:
+                        n += 1
+                elif linktype in (12, 101, 228):
+                    if data and (data[0] >> 4) == 4:
+                        n += 1
+                elif linktype == 113:
+                    if len(data) >= 16 \
+                            and ((data[14] << 8) | data[15]) == 0x0800:
+                        n += 1
+                elif linktype == 276:
+                    if len(data) >= 20 \
+                            and ((data[0] << 8) | data[1]) == 0x0800:
+                        n += 1
+                elif linktype == 0:
+                    if len(data) >= 4 and (
+                            struct.unpack("<I", data[0:4])[0] == 2
+                            or struct.unpack(">I", data[0:4])[0] == 2):
+                        n += 1
+    except Exception as exc:  # noqa: BLE001 - surfaced in the table, not hidden
+        return None, "%s: %s" % (type(exc).__name__, exc)
+    return n, "independent raw-bytes counter (no scapy, no tshark)"
 
 
 def load_raw(path, schema):
